@@ -1,7 +1,7 @@
-Mail/SpamTest/Bayesian version 0.01
+Mail/SpamTest/Bayesian version 0.02
 ===================================
 
-       This module implements the Bayesian spam-testing algorithm 
+       This module implements the naive Bayesian spam-testing algorithm 
 described by Paul Graham at:
 
        http://www.paulgraham.com/spam.html
@@ -32,6 +32,10 @@ This module requires these other modules and libraries:
 
   BerkeleyDB
   MIME::Parser (in MIME::tools)
+
+Also useful will be:
+
+  IO::File
 
 COPYRIGHT AND LICENCE
 

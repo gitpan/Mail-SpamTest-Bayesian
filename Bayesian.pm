@@ -44,7 +44,7 @@ require Exporter;
 
 our @ISA = qw(Exporter);
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use strict;
 use BerkeleyDB;   # libberkeleydb-perl
@@ -95,21 +95,20 @@ sub new {
 
 =head2 init_db()
 
-Resets databases. Note that this will not recover space - if you want to
-delete an existing database, just delete the three files general.db,
-spam.db and nonspam.db. Call this only once, when you first set up the
-database.
+Deletes and re-initialises databases. Call this only once, when you
+first set up the database.
 
 =cut
 
 sub init_db {
   my $self=shift;
   foreach my $db (qw(spam nonspam general)) {
-    my ($k,$v);
-    my $cursor=$self->{$db}->db_cursor;
-    while ($cursor->c_get($k, $v, DB_NEXT) == 0) {
-      $cursor->c_del;
-    }
+    undef $self->{$db};
+    unlink "$self->{dir}/$db.db";
+    $self->{$db}=new BerkeleyDB::Hash(
+                        -Filename => "$self->{dir}/$db.db",
+                        -Flags => DB_CREATE
+                      );
   }
   $self->{general}->db_put('spam',0);
   $self->{general}->db_put('nonspam',0);
@@ -161,6 +160,47 @@ sub merge_mbox {
     $self->merge_message($spamstate,$m);
   }
 }
+
+=head1 merge_stream_spam()
+
+Pass a stream (pointing to an mbox file) from which to read messages.
+For example, an IO::File object.
+
+=cut
+
+sub merge_stream_spam {
+    my $self=shift;
+    $self->merge_stream(1,@_);
+}
+
+=head1 merge_stream_nonspam()
+
+Pass a stream (pointing to an mbox file) from which to read messages.
+
+=cut
+
+sub merge_stream_nonspam {
+    my $self=shift;
+    $self->merge_stream(0,@_);
+}
+
+sub merge_stream {
+    my $self=shift;
+    my $spamstate=shift;
+    my $handle=shift;
+    my $message = '';
+    while (my $line = <$handle>) {
+      if ($line =~ /^From / && length($message) > 0) {
+          $self->merge_message($spamstate,$message);
+          $message='';
+      }
+      $message .= $line;
+    }
+    if (length($message) > 0) {
+      $self->merge_message($spamstate,$message);
+    }
+}
+
 
 =head2 merge_message_spam()
 
@@ -246,7 +286,10 @@ sub test_message {
   my %total;
   foreach my $mode (qw(spam nonspam)) {
     if ($self->{general}->db_get($mode,$total{$mode})) {
-      $total{$mode}=0;
+      $total{$mode}=1;
+    }
+    unless ($total{$mode}) {
+      $total{$mode}=1;
     }
   }
   foreach my $token (@tokens) {
@@ -269,7 +312,7 @@ sub test_message {
       }
     }
   }
-  my @toklist=sort {abs($self->{tokencache}->{$Mail::SpamTest::Bayesian::b}-0.5) <=> abs($self->{tokencache}->{$Mail::SpamTest::Bayesian::a}-0.5)} @tokens;
+  my @toklist=sort {abs($self->{tokencache}->{$b}-0.5) <=> abs($self->{tokencache}->{$a}-0.5)} @tokens;
   @toklist=@toklist[0..($self->{significant}-1)];
   my $p=0.5;
   foreach (map {$self->{tokencache}->{$_}} @toklist) {
@@ -280,9 +323,9 @@ sub test_message {
     $s=1;
   }
   @toklist=map {"$_ (".sprintf('%.3f',$self->{tokencache}->{$_}).")"}
-           sort {$self->{tokencache}->{$Mail::SpamTest::Bayesian::a} <=> $self->{tokencache}->{$Mail::SpamTest::Bayesian::b}
+           sort {$self->{tokencache}->{$a} <=> $self->{tokencache}->{$b}
                  ||
-                 $Mail::SpamTest::Bayesian::a cmp $Mail::SpamTest::Bayesian::b}
+                 $a cmp $b}
            @toklist;
   return ($s,$p,\@toklist);
 }
@@ -305,8 +348,8 @@ sub _tokenise_message {
   }
   my @token;
   foreach my $line (@message) {
-    foreach my $token (split /[^-\$A-Za-z0-9\']+/,$line) {
-      if ($token ne '') {
+    foreach my $token (split /[^-\$A-Za-z0-9\']+/o,$line) {
+      if ($token =~ /\D/o) {
         push @token,$token;
       }
     }
